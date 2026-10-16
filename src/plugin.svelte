@@ -7,7 +7,36 @@
  import config from './pluginConfig';
  import AircraftTracker from './AircraftTracker.svelte';
  let activeTool='route',aircraftAutoCenter=false;
- function selectTool(tool){cancelPending();stopTouchInspect();activeTool=tool;lastMouse=null;if(tool==='route')aircraftAutoCenter=false;}
+ let aircraftWeather=true,latestAircraft=null,aircraftWeatherMessage='',chartAircraft,weatherSynced=false;
+ function aircraftAttitude(raw){
+  const speed=raw===null||raw===undefined||String(raw).trim()===''?NaN:Number(raw);
+  if(!Number.isFinite(speed))return {angle:0,label:'Dikey hız verisi yok'};
+  if(speed>100)return {angle:-25,label:`Tırmanış · ${speed} ft/dk`};
+  if(speed< -100)return {angle:25,label:`Alçalış · ${speed} ft/dk`};
+  return {angle:0,label:`Yatay uçuş · ${speed} ft/dk`};
+ }
+ function selectTool(tool){cancelPending();stopTouchInspect();activeTool=tool;lastMouse=null;if(tool==='route'){aircraftAutoCenter=false;weatherSynced=false;if(chartAircraft)chartAircraft.style.display='none';}else syncAircraftWeather();}
+ function onAircraftPosition(event){
+  latestAircraft=event.detail.aircraft;
+  if(!latestAircraft){weatherSynced=false;if(chartAircraft)chartAircraft.style.display='none';aircraftWeatherMessage='Güncel uçak konumu bekleniyor.';return;}
+  syncAircraftWeather();
+ }
+ function syncAircraftWeather(){
+  if(activeTool!=='aircraft'||!aircraftWeather||!latestAircraft)return;
+  const a=latestAircraft;
+  const alt=a.altitude_ft===null||a.altitude_ft===undefined||a.altitude_ft===''?NaN:Number(a.altitude_ft);
+  const location={lat:a.lat,lon:a.lon,source:'singleclick'};
+  weatherSynced=false;
+  try{
+   const open=!!store.get('detailLocation');
+   if(open&&!mobile)singleclick.emit('detail',location);else bcast.emit('rqstOpen','detail',{...location,display:'meteogram'});
+   if(Number.isFinite(alt)&&alt>=0){flightAltitude=String(alt);altitudeUnit='ft';altitudeReference='amsl';altitudeEnabled=true;weatherSynced=true;aircraftWeatherMessage=`${a.callsign||'Uçak'}: konum tahmini ve ${Math.round(alt).toLocaleString('tr-TR')} ft irtifa işareti güncellendi.`;}
+   else {aircraftWeatherMessage='Konum tahmini açıldı; güncel sayısal irtifa yok.';if(chartAircraft)chartAircraft.style.display='none';}
+  }catch{aircraftWeatherMessage='Uçak konumunun tahmin paneli açılamadı.';}
+ }
+ function changeAircraftWeather(){
+  if(aircraftWeather)syncAircraftWeather();else {weatherSynced=false;aircraftWeatherMessage='Uçak için otomatik hava takibi kapalı.';if(chartAircraft)chartAircraft.style.display='none';}
+ }
  export let pluginRootElement;
 // Screen-space projection keeps the hit tolerance constant at every zoom level.
 function nearestOnSegments(p, points) {
@@ -239,6 +268,7 @@ function nearestOnSegments(p, points) {
  function updateAltitudeLine(){
   if(!altitudeOverlay)return;
   altitudeOverlay.style.display='none';
+  if(chartAircraft)chartAircraft.style.display='none';
   if(!altitudeEnabled)return;
   const value=Number(String(flightAltitude).replace(',','.'));
   if(String(flightAltitude).trim()===''||!Number.isFinite(value)||value<0){altitudeMessage='Sıfır veya daha büyük bir irtifa girin.';return;}
@@ -270,6 +300,17 @@ function nearestOnSegments(p, points) {
   altitudeOverlay.style.left=left+'px';altitudeOverlay.style.top=y+'px';altitudeOverlay.style.width=(right-left)+'px';altitudeOverlay.style.display='block';
   altitudeOverlay.firstElementChild.textContent=`${value.toLocaleString('tr-TR')} ${altitudeUnit} ${altitudeReference.toUpperCase()}`;
   altitudeMessage=`Turuncu çizgi etkin · Model arazisi: ${Math.round(ground)} m`;
+  if(chartAircraft&&weatherSynced&&aircraftWeather&&activeTool==='aircraft'&&latestAircraft){
+   const nowLine=root.querySelector('.forecast-table__now-line');
+   const timeRect=nowLine?.getBoundingClientRect();
+   if(timeRect&&timeRect.left>=left&&timeRect.left<=right){
+    chartAircraft.style.left=timeRect.left+'px';chartAircraft.style.top=y+'px';chartAircraft.style.display='block';
+    const attitude=aircraftAttitude(latestAircraft.vertical_speed_fpm);
+    chartAircraft.style.transform=`translate(-50%,-50%) rotate(${attitude.angle}deg)`;
+    chartAircraft.title=`${latestAircraft.callsign||'Uçak'} · ${value} ${altitudeUnit} · ${attitude.label} · Anlık saat`;
+   }else aircraftWeatherMessage='Uçak konumu ve irtifası güncel. Uçak işareti için Meteogramda anlık saati görünür alana getirin.';
+  }
+
  }
 
  let mobile=false,panelCollapsed=false,touchInspect=false,touchPointer=null,mobileQuery,lockedControls=[],oldTouchAction;
@@ -389,6 +430,7 @@ function nearestOnSegments(p, points) {
  onMount(()=>{
   altitudeOverlay=document.createElement('div');altitudeOverlay.className='rw-altitude-guide';altitudeOverlay.setAttribute('aria-hidden','true');altitudeOverlay.appendChild(document.createElement('span'));document.body.appendChild(altitudeOverlay);
   try{const a=JSON.parse(localStorage.getItem('rw-flight-altitude')||'null');if(a){flightAltitude=String(a.value??'');altitudeUnit=a.unit==='m'?'m':'ft';altitudeReference=a.reference==='agl'?'agl':'amsl';altitudeEnabled=!!a.enabled;}}catch{}
+  chartAircraft=document.createElement('div');chartAircraft.className='rw-chart-aircraft';chartAircraft.innerHTML='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" fill="currentColor"><path d="M30 16c0-1-1-2-3-2h-7L13 3H9l4 11H6L3 10H1l2 6-2 6h2l3-4h7L9 29h4l7-11h7c2 0 3-1 3-2Z"/></svg>';chartAircraft.setAttribute('aria-hidden','true');document.body.appendChild(chartAircraft);
   altitudeTimer=setInterval(updateAltitudeLine,250);
 
   // Keep controls outside Windy's bottom embedded host so forecast cannot clip them.
@@ -409,12 +451,12 @@ function nearestOnSegments(p, points) {
   container.addEventListener('lostpointercapture',touchCaptureLost,true);
   singleclick.on(config.name,add);document.addEventListener('mousemove',move,true);container.addEventListener('mouseleave',leave);
  });
- onDestroy(()=>{stopTouchInspect();mobileQuery?.removeEventListener('change',refreshMobile);container?.removeEventListener('pointerdown',touchStart,true);container?.removeEventListener('pointermove',touchMove,true);container?.removeEventListener('pointerup',touchEnd,true);container?.removeEventListener('pointercancel',touchEnd,true);container?.removeEventListener('lostpointercapture',touchCaptureLost,true);clearInterval(altitudeTimer);altitudeOverlay?.remove();window.removeEventListener('resize',clampPanel);panelObserver?.disconnect();if(host)host.style.display=hostDisplay||'';panel?.remove();cancelPending();singleclick.off(config.name,add);document.removeEventListener('mousemove',move,true);container?.removeEventListener('mouseleave',leave);if(line)map.removeLayer(line);if(cursor)map.removeLayer(cursor);markers.forEach(m=>map.removeLayer(m));});
+ onDestroy(()=>{stopTouchInspect();mobileQuery?.removeEventListener('change',refreshMobile);container?.removeEventListener('pointerdown',touchStart,true);container?.removeEventListener('pointermove',touchMove,true);container?.removeEventListener('pointerup',touchEnd,true);container?.removeEventListener('pointercancel',touchEnd,true);container?.removeEventListener('lostpointercapture',touchCaptureLost,true);clearInterval(altitudeTimer);altitudeOverlay?.remove();chartAircraft?.remove();window.removeEventListener('resize',clampPanel);panelObserver?.disconnect();if(host)host.style.display=hostDisplay||'';panel?.remove();cancelPending();singleclick.off(config.name,add);document.removeEventListener('mousemove',move,true);container?.removeEventListener('mouseleave',leave);if(line)map.removeLayer(line);if(cursor)map.removeLayer(cursor);markers.forEach(m=>map.removeLayer(m));});
 </script>
 <div class="route-panel" class:is-mobile={mobile} bind:this={panel} on:keydown={handlePanelKey}>
- <div class="panel-header" title="Taşımak için başlıktan tutup sürükleyin" on:pointerdown={startDrag} on:pointermove={dragMove} on:pointerup={endDrag} on:pointercancel={endDrag} on:lostpointercapture={endDrag}><strong>Uçuş Rotası Hava Durumu · v0.6.0</strong><span class="count">{points.length} nokta</span>{#if mobile}<button type="button" class="settings-toggle" on:click={()=>panelCollapsed=!panelCollapsed}>{panelCollapsed?'Ayarlar':'Küçült'}</button>{/if}<button type="button" class="close-panel" aria-label="Eklentiyi kapat" on:click={()=>bcast.emit('rqstClose',config.name)}>×</button></div>
+ <div class="panel-header" title="Taşımak için başlıktan tutup sürükleyin" on:pointerdown={startDrag} on:pointermove={dragMove} on:pointerup={endDrag} on:pointercancel={endDrag} on:lostpointercapture={endDrag}><strong>Uçuş Rotası Hava Durumu · v0.7.1</strong><span class="count">{points.length} nokta</span>{#if mobile}<button type="button" class="settings-toggle" on:click={()=>panelCollapsed=!panelCollapsed}>{panelCollapsed?'Ayarlar':'Küçült'}</button>{/if}<button type="button" class="close-panel" aria-label="Eklentiyi kapat" on:click={()=>bcast.emit('rqstClose',config.name)}>×</button></div>
  <div class="tool-tabs" role="group" aria-label="Araç seçimi"><button type="button" class:selected={activeTool==='route'} aria-pressed={activeTool==='route'} on:click={()=>selectTool('route')}>Rota ve Hava</button><button type="button" class:selected={activeTool==='aircraft'} aria-pressed={activeTool==='aircraft'} on:click={()=>selectTool('aircraft')}>Uçak Takibi</button></div>
- <div hidden={activeTool!=='aircraft'||(mobile&&panelCollapsed)}><AircraftTracker bind:autoCenter={aircraftAutoCenter}/></div>
+ <div hidden={activeTool!=='aircraft'||(mobile&&panelCollapsed)}><div class="aircraft-weather-control"><label><input type="checkbox" bind:checked={aircraftWeather} on:change={changeAircraftWeather}/> Uçağın konumu ve irtifasında hava durumunu izle</label><small>{aircraftWeatherMessage||'Takip edilen uçak güncellendikçe alttaki tahmin ve irtifa çizgisi yenilenir.'}</small><small>Alt panelde Meteogram seçili olmalı. Uçak işareti, anlık saat ve ADS-B irtifasının yaklaşık grafik karşılığındadır; haritadaki uçak da konumunu izler.</small></div><AircraftTracker bind:autoCenter={aircraftAutoCenter} on:position={onAircraftPosition}/></div>
  {#if activeTool==='aircraft'&&mobile&&panelCollapsed}<small>Uçak araması ve takip ayarları için Ayarlar düğmesine basın.</small>{/if}
  {#if activeTool==='route'}
  {#if mobile}<div class="mobile-controls">
@@ -488,6 +530,7 @@ function nearestOnSegments(p, points) {
  @media(max-width:600px){.route-panel{top:92px;right:12px;width:calc(100vw - 24px);max-height:calc(100dvh - 120px);}}
  :global(.rw-altitude-guide){position:fixed;display:none;height:0;border-top:2px solid #ff8a00;z-index:450;pointer-events:none;box-shadow:0 0 2px white;} :global(.rw-altitude-guide span){position:absolute;left:8px;top:-18px;background:#fff2d9;color:#9a4300;border:1px solid #ff8a00;border-radius:3px;font:11px/14px sans-serif;padding:0 4px;white-space:nowrap;}
  .is-mobile{width:min(360px,calc(100vw - 24px));right:12px;top:70px;max-height:calc(100dvh - 100px)}.is-mobile .panel-header strong{font-size:12px}.is-mobile .count{display:none}.is-mobile input,.is-mobile select{font-size:16px}.is-mobile button{min-height:40px}.settings-toggle{font-size:12px;padding:5px 8px}.mobile-controls{display:flex;align-items:center;gap:8px;margin-top:8px}.mobile-controls span{font-size:11px;color:#c1ceda}.inspect-active{background:#ffbd24;color:#172331}
+ :global(.rw-chart-aircraft){position:fixed;display:none;z-index:460;pointer-events:none;transform:translate(-50%,-50%) rotate(0deg);font:30px/1 sans-serif;color:#ff7900;text-shadow:0 0 3px white,0 0 3px white;width:32px;height:32px;filter:drop-shadow(0 0 2px white);transition:top .8s linear,left .8s linear,transform .6s ease;} .aircraft-weather-control{display:grid;gap:6px;padding:8px 0}.aircraft-weather-control label{display:flex;align-items:center;gap:6px}.aircraft-weather-control input{width:auto}.aircraft-weather-control small{font-size:11px}
  .tool-tabs{display:flex;gap:6px;margin:10px 0}.tool-tabs button{flex:1;background:#33465b;color:white}.tool-tabs .selected{background:#ffbd24;color:#172331}
  .file-tools{display:grid;gap:7px;margin-top:8px}.file-tools input{width:100%}.file-tools select{width:100%}
  .panel-header{cursor:grab;touch-action:none;user-select:none;display:flex;align-items:center;gap:8px}.panel-header:active{cursor:grabbing}.panel-header strong{flex:1}.close-panel{padding:0 5px;border:0;background:transparent !important;color:white !important;font-size:22px;line-height:1}.panel-header .count{font-size:11px;white-space:nowrap}

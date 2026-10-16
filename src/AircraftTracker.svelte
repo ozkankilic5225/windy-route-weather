@@ -71,7 +71,7 @@
                 {/if}
 
                 <div class="live">
-                    ● CANLI ADS-B • 10 sn
+                    {error?'● SON ALINAN VERİ — güncel veri bekleniyor':'● ADS-B • 10 sn'}
                 </div>
 
             </div>
@@ -84,7 +84,8 @@
 <script lang="ts">
 
     import { map } from "@windy/map";
-    import { onDestroy } from "svelte";
+    import { onDestroy, createEventDispatcher } from "svelte";
+    const dispatch = createEventDispatcher();
     export let autoCenter = false;
     let stopped = true;
     let destroyed = false;
@@ -695,7 +696,7 @@
      */
     function focusAircraft(){if(aircraft)map.setView([aircraft.lat,aircraft.lon],Math.max(map.getZoom(),8),{animate:false});}
     function stopTracking(){
-        stopped=true;generation++;request?.abort();request=null;inFlight=false;
+        dispatch('position',{aircraft:null});stopped=true;generation++;request?.abort();request=null;inFlight=false;
         if(timer){clearInterval(timer);timer=null;}
         stopAnimation();aircraftMarker?.remove();aircraftMarker=null;
         trailLine?.remove();trailLine=null;trailPoints=[];aircraft=null;loading=false;error='';
@@ -711,12 +712,12 @@
             if(!response.ok)throw new Error(`HTTP ${response.status}`);
             const data=await response.json();
             if(destroyed||session!==generation)return;
-            if(!data.found||!data.aircraft){error=data.message||`${wanted} şu anda bulunamadı.`;return;}
+            if(!data.found||!data.aircraft){dispatch('position',{aircraft:null});error=data.message||`${wanted} şu anda bulunamadı.`;return;}
             const next={...data.aircraft,lat:Number(data.aircraft.lat),lon:Number(data.aircraft.lon)};
-            if(!Number.isFinite(next.lat)||!Number.isFinite(next.lon)||Math.abs(next.lat)>90||Math.abs(next.lon)>180){error='Uçak bulundu fakat geçerli konumu yok.';return;}
+            if(!Number.isFinite(next.lat)||!Number.isFinite(next.lon)||Math.abs(next.lat)>90||Math.abs(next.lon)>180){dispatch('position',{aircraft:null});error='Uçak bulundu fakat geçerli konumu yok.';return;}
             if(next.track_deg!==null&&next.track_deg!==undefined)next.track_deg=Number(next.track_deg);
-            aircraft=next;error='';showAircraftOnMap(next);
-        }catch(e){if(!destroyed&&session===generation)error='Canlı ADS-B verisi alınamadı; yeniden denenecek.';}
+            aircraft=next;error='';showAircraftOnMap(next);dispatch('position',{aircraft:next});
+        }catch(e){if(!destroyed&&session===generation){dispatch('position',{aircraft:null});error='Canlı ADS-B verisi alınamadı; yeniden denenecek.';}}
         finally{clearTimeout(timeout);if(session===generation){inFlight=false;request=null;}}
     }
 
