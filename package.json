@@ -1,6 +1,6 @@
 {
   "name": "windy-plugin-route-weather",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Windy üzerinde rota boyunca hava tahmini ve irtifa inceleme",
   "main": "dist/plugin.min.js",
   "type": "module",

@@ -5,6 +5,9 @@
  import store from '@windy/store';
  import { singleclick } from '@windy/singleclick';
  import config from './pluginConfig';
+ import AircraftTracker from './AircraftTracker.svelte';
+ let activeTool='route',aircraftAutoCenter=false;
+ function selectTool(tool){cancelPending();stopTouchInspect();activeTool=tool;lastMouse=null;if(tool==='route')aircraftAutoCenter=false;}
  export let pluginRootElement;
 // Screen-space projection keeps the hit tolerance constant at every zoom level.
 function nearestOnSegments(p, points) {
@@ -324,7 +327,7 @@ function nearestOnSegments(p, points) {
   else line=null;
   points.forEach((p,i)=>markers.push(L.marker([p.lat,p.lon],{icon:L.divIcon({className:'route-weather-dot',html:String(i+1),iconSize:[22,22],iconAnchor:[11,11]}),interactive:false}).addTo(map)));
  }
- function add(p){if(!drawing)return;points=[...points,{lat:p.lat,lon:p.lon}];redraw();save();}
+ function add(p){if(!drawing||activeTool!=='route')return;points=[...points,{lat:p.lat,lon:p.lon}];redraw();save();}
  function finish(){if(points.length<2)return;drawing=false;paused=false;status='Fareyi sarı rota üzerinde gezdirin.';}
  function edit(){stopTouchInspect();cancelPending();drawing=true;status='Haritaya tıklayarak rotaya nokta ekleyin.';}
  function undo(){cancelPending();points=points.slice(0,-1);drawing=true;redraw();save();}
@@ -361,7 +364,7 @@ function nearestOnSegments(p, points) {
   try{track(e);}catch(err){cancelPending();status='Takip hatası: '+(err?.message||String(err));}
  }
  function track(e){
-  if(drawing||paused||points.length<2)return;
+  if(activeTool!=='route'||drawing||paused||points.length<2)return;
   if(e.target?.closest?.('.route-panel'))return;
   if(lastMouse&&Math.hypot(e.clientX-lastMouse.x,e.clientY-lastMouse.y)<2)return;
   lastMouse={x:e.clientX,y:e.clientY};
@@ -409,7 +412,11 @@ function nearestOnSegments(p, points) {
  onDestroy(()=>{stopTouchInspect();mobileQuery?.removeEventListener('change',refreshMobile);container?.removeEventListener('pointerdown',touchStart,true);container?.removeEventListener('pointermove',touchMove,true);container?.removeEventListener('pointerup',touchEnd,true);container?.removeEventListener('pointercancel',touchEnd,true);container?.removeEventListener('lostpointercapture',touchCaptureLost,true);clearInterval(altitudeTimer);altitudeOverlay?.remove();window.removeEventListener('resize',clampPanel);panelObserver?.disconnect();if(host)host.style.display=hostDisplay||'';panel?.remove();cancelPending();singleclick.off(config.name,add);document.removeEventListener('mousemove',move,true);container?.removeEventListener('mouseleave',leave);if(line)map.removeLayer(line);if(cursor)map.removeLayer(cursor);markers.forEach(m=>map.removeLayer(m));});
 </script>
 <div class="route-panel" class:is-mobile={mobile} bind:this={panel} on:keydown={handlePanelKey}>
- <div class="panel-header" title="Taşımak için başlıktan tutup sürükleyin" on:pointerdown={startDrag} on:pointermove={dragMove} on:pointerup={endDrag} on:pointercancel={endDrag} on:lostpointercapture={endDrag}><strong>Uçuş Rotası Hava Durumu · v0.5.0</strong><span class="count">{points.length} nokta</span>{#if mobile}<button type="button" class="settings-toggle" on:click={()=>panelCollapsed=!panelCollapsed}>{panelCollapsed?'Ayarlar':'Küçült'}</button>{/if}<button type="button" class="close-panel" aria-label="Eklentiyi kapat" on:click={()=>bcast.emit('rqstClose',config.name)}>×</button></div>
+ <div class="panel-header" title="Taşımak için başlıktan tutup sürükleyin" on:pointerdown={startDrag} on:pointermove={dragMove} on:pointerup={endDrag} on:pointercancel={endDrag} on:lostpointercapture={endDrag}><strong>Uçuş Rotası Hava Durumu · v0.6.0</strong><span class="count">{points.length} nokta</span>{#if mobile}<button type="button" class="settings-toggle" on:click={()=>panelCollapsed=!panelCollapsed}>{panelCollapsed?'Ayarlar':'Küçült'}</button>{/if}<button type="button" class="close-panel" aria-label="Eklentiyi kapat" on:click={()=>bcast.emit('rqstClose',config.name)}>×</button></div>
+ <div class="tool-tabs" role="group" aria-label="Araç seçimi"><button type="button" class:selected={activeTool==='route'} aria-pressed={activeTool==='route'} on:click={()=>selectTool('route')}>Rota ve Hava</button><button type="button" class:selected={activeTool==='aircraft'} aria-pressed={activeTool==='aircraft'} on:click={()=>selectTool('aircraft')}>Uçak Takibi</button></div>
+ <div hidden={activeTool!=='aircraft'||(mobile&&panelCollapsed)}><AircraftTracker bind:autoCenter={aircraftAutoCenter}/></div>
+ {#if activeTool==='aircraft'&&mobile&&panelCollapsed}<small>Uçak araması ve takip ayarları için Ayarlar düğmesine basın.</small>{/if}
+ {#if activeTool==='route'}
  {#if mobile}<div class="mobile-controls">
   {#if drawing}<button type="button" on:click={finish} disabled={points.length<2}>Rotayı tamamla</button>{:else}<button type="button" class:inspect-active={touchInspect} aria-pressed={touchInspect} on:click={toggleTouchInspect}>{touchInspect?'Haritayı kaydır':'Rotayı incele'}</button>{/if}
   <span>{touchInspect?'Dokunarak konum seçimi açık':`${points.length} rota noktası`}</span>
@@ -474,12 +481,14 @@ function nearestOnSegments(p, points) {
  {/if}
  <p aria-live="polite">{status}</p>
  {#if !mobile||!panelCollapsed}<small>{mobile?'Rotayı incele modunda çizgiye dokunun; haritayı taşımak için Haritayı kaydır seçin.':'Çizgiye yakın gezin; alttaki Windy tahmini konuma göre değişir.'}</small>{/if}
+ {/if}
 </div>
 <style>
  .route-panel{position:fixed;top:60px;right:64px;bottom:auto;z-index:1000;width:350px;box-sizing:border-box;background:#172331;color:white;padding:12px;border-radius:12px;max-width:360px;max-height:calc(100dvh - 84px);overflow-y:auto;overscroll-behavior:contain;font:13px/1.4 sans-serif;box-shadow:0 4px 18px #0005}
  @media(max-width:600px){.route-panel{top:92px;right:12px;width:calc(100vw - 24px);max-height:calc(100dvh - 120px);}}
  :global(.rw-altitude-guide){position:fixed;display:none;height:0;border-top:2px solid #ff8a00;z-index:450;pointer-events:none;box-shadow:0 0 2px white;} :global(.rw-altitude-guide span){position:absolute;left:8px;top:-18px;background:#fff2d9;color:#9a4300;border:1px solid #ff8a00;border-radius:3px;font:11px/14px sans-serif;padding:0 4px;white-space:nowrap;}
  .is-mobile{width:min(360px,calc(100vw - 24px));right:12px;top:70px;max-height:calc(100dvh - 100px)}.is-mobile .panel-header strong{font-size:12px}.is-mobile .count{display:none}.is-mobile input,.is-mobile select{font-size:16px}.is-mobile button{min-height:40px}.settings-toggle{font-size:12px;padding:5px 8px}.mobile-controls{display:flex;align-items:center;gap:8px;margin-top:8px}.mobile-controls span{font-size:11px;color:#c1ceda}.inspect-active{background:#ffbd24;color:#172331}
+ .tool-tabs{display:flex;gap:6px;margin:10px 0}.tool-tabs button{flex:1;background:#33465b;color:white}.tool-tabs .selected{background:#ffbd24;color:#172331}
  .file-tools{display:grid;gap:7px;margin-top:8px}.file-tools input{width:100%}.file-tools select{width:100%}
  .panel-header{cursor:grab;touch-action:none;user-select:none;display:flex;align-items:center;gap:8px}.panel-header:active{cursor:grabbing}.panel-header strong{flex:1}.close-panel{padding:0 5px;border:0;background:transparent !important;color:white !important;font-size:22px;line-height:1}.panel-header .count{font-size:11px;white-space:nowrap}
  .coordinates{margin-top:10px;border-top:1px solid #526378;padding-top:8px}summary{cursor:pointer;color:#ffce54}form{display:grid;gap:5px;margin-top:8px}label{font-size:12px;color:#d8e2eb}.coord-row{display:flex;gap:6px}input,select{min-width:0;box-sizing:border-box;background:#26384b;color:white;border:1px solid #60748a;border-radius:5px;padding:7px;font:inherit}input{flex:1;width:55%}.coord-row select{width:110px}form>button{margin-top:5px}.error{color:#ffb4b4}.success{color:#9fe0b5}.point-list{max-height:100px;overflow-y:auto;margin:8px 0 0;padding-left:25px;font-size:11px}
