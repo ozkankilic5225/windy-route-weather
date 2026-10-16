@@ -1,0 +1,34 @@
+UÇUŞ ROTASI HAVA DURUMU — WINDY YAYINI (0.5.0)
+
+Bu paket ayrı windy-plugin-route-weather projesidir.
+Uçak takip deposunun üzerine yüklemeyin.
+
+1. GitHub hesabınızda windy-route-weather adlı boş bir depo oluşturun.
+   README, lisans ve gitignore eklemeyin.
+2. ZIP'i ayrı klasöre çıkarın ve bu klasörde Terminal açın.
+3. PowerShell'de aşağıdaki komutları sırayla çalıştırın:
+   git init
+   git add .
+   git commit -m "Rota hava durumu 0.5.0"
+   git branch -M main
+   git remote add origin https://github.com/ozkankilic5225/windy-route-weather.git
+   git push -u origin main
+   (GitHub kullanıcı adınız farklıysa origin adresini değiştirin.)
+4. https://api.windy.com/keys adresindeki Windy Plugins API anahtarını kullanın.
+   Anahtarı dosyalara veya sohbete yazmayın.
+5. Yeni deponuzda Settings > Secrets and variables > Actions > New repository secret:
+   Name: WINDY_API_KEY
+   Secret: Windy Plugins API anahtarınız.
+6. Actions > publish-plugin > Run workflow > main > Run workflow.
+7. Yeşil tamamlanınca Publish Plugin adımındaki installUrl / yükleme adresini alın.
+8. Windy'de bu yayımlanmış adresle eklentiyi kurun.
+
+SONUÇ
+Windy sunucularında barınan eklenti localhost'a ve açık bilgisayara ihtiyaç duymaz.
+private: true korunur: yükleme bağlantısı paylaşılabilir, genel galeri onayı ayrı süreçtir.
+Mobil panel ve dokunmatik rota takibi eklendi; gerçek cihaz testi yapılmalıdır.
+Tarayıcıda saklanan rota ve panel ayarları diğer cihazlara otomatik aktarılmaz;
+KML/KMZ ile rota taşıyabilirsiniz.
+
+Resmî rehber:
+https://docs.windy-plugins.com/getting-started/publishing-plugin.html
