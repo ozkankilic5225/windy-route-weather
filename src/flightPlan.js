@@ -13,16 +13,16 @@ export function between(a,b,f){
  const A=d<1e-8?1-f:Math.sin((1-f)*d)/Math.sin(d),B=d<1e-8?f:Math.sin(f*d)/Math.sin(d),v=x.map((n,i)=>A*n+B*y[i]);
  return {lat:Math.atan2(v[2],Math.hypot(v[0],v[1]))/RAD,lon:Math.atan2(v[1],v[0])/RAD};
 }
-export function splitRoute(points){
+export function splitRoute(points,spacingKm=40,maxParts=120){
  if(points.length<2)throw Error('Önce en az iki noktalı bir rota oluşturun.');
  const out=[];
  for(let i=1;i<points.length;i++){
   const dist=leg(points[i-1],points[i]).nm;if(dist<.001)continue;
-  const n=Math.ceil(dist*1.852/40);
-  if(out.length+n>120)throw Error('Bu yerel denemede en fazla 120 hesap bölümü kullanılabilir. Rotayı kısaltın veya gereksiz ara noktaları azaltın.');
+  const n=Math.ceil(dist*1.852/spacingKm);
+  if(out.length+n>maxParts)throw Error(`Bu hesapta en fazla ${maxParts} bölüm kullanılabilir. Örnekleme aralığını artırın veya rotayı kısaltın.`);
   for(let j=0;j<n;j++){
    const a=between(points[i-1],points[i],j/n),b=between(points[i-1],points[i],(j+1)/n);
-   out.push({...leg(a,b),point:between(a,b,.5),end:b,waypoint:i+1});
+   out.push({...leg(a,b),point:between(a,b,.5),begin:a,end:b,waypoint:i+1});
   }
  }
  if(!out.length)throw Error('Rotanın uzunluğu sıfır.');return out;
@@ -62,6 +62,30 @@ export function windAt(payload,t,metres){
  const a=levels[hi-1],b=levels[hi],f=(metres-a.h)/(b.h-a.h);
  return {h:metres,p:Math.exp(Math.log(a.p)+(Math.log(b.p)-Math.log(a.p))*f),temp:a.temp+(b.temp-a.temp)*f,u:a.u+(b.u-a.u)*f,v:a.v+(b.v-a.v)*f};
 }
+// Cloud fraction is a model percentage, not probability of entering cloud.
+export function cloudAt(payload,t,metres){
+ const ground=payload.header?.elevation;
+ if(typeof ground==='number'&&metres<=ground)return null;
+ for(const d of [payload.sounding,payload.meteogram]){
+  if(!d)continue;
+  try{
+   const heights=Object.keys(d).filter(k=>/^gh-\d+h$/.test(k)).map(k=>({level:k.slice(3),h:timeValue(d,k,t)})).filter(v=>typeof ground!=='number'||v.h>=ground).sort((a,b)=>a.h-b.h);
+   const i=heights.findIndex(v=>v.h>=metres);
+   if(i<0||(!i&&heights[0].h!==metres))continue;
+   const b=heights[i],a=b.h===metres?b:heights[i-1];
+   const value=level=>{const n=timeValue(d,'cloud-'+level,t);if(n<0||n>100)throw Error('Bulut verisi aralık dışında.');return n;};
+   const x=value(a.level),y=value(b.level);
+   return a===b?x:x+(y-x)*(metres-a.h)/(b.h-a.h);
+  }catch{/* Missing data stays unknown; never infer clear skies. */}
+ }
+ return null;
+}
+export function cloudStyle(value,low=20,high=70){
+ if(value===null||!Number.isFinite(value))return {color:'#9ca3af',label:'Bulut verisi yok'};
+ if(value>=high)return {color:'#ef4444',label:'Yüksek model bulutluluğu'};
+ if(value>=low)return {color:'#facc15',label:'Orta model bulutluluğu'};
+ return {color:'#22c55e',label:'Düşük model bulutluluğu'};
+}
 export function speeds(kias,weather,bearing){
  // KIAS is treated as KCAS: instrument/position errors require aircraft-specific data.
  const qc=101325*((1+.2*(kias/KT/340.294)**2)**3.5-1);
@@ -74,11 +98,11 @@ export function speeds(kias,weather,bearing){
  if(gs<=1)throw Error('Karşı rüzgâr nedeniyle girilen hızla rota üzerinde ilerlenemiyor.');
  return {tas,gs,tail,cross,wind:Math.hypot(weather.u,weather.v)*KT,windFrom:(Math.atan2(-weather.u,-weather.v)/RAD+360)%360};
 }
-export async function calculatePlan({points,kias,metres,departure,load,progress=()=>{},cancelled=()=>false}){
+export async function calculatePlan({points,kias,metres,departure,load,progress=()=>{},cancelled=()=>false,clouds=false,spacingKm=10}){
  if(!Number.isFinite(kias)||kias<30||kias>600)throw Error('KIAS 30–600 aralığında olmalı.');
  if(!Number.isFinite(metres)||metres<=0||metres>20000)throw Error('0–20000 metre aralığında pozitif AMSL irtifası girin.');
  if(!Number.isFinite(departure))throw Error('Geçerli bir kalkış tarihi ve saati girin.');
- const parts=splitRoute(points),rows=[];let now=departure;
+ const parts=splitRoute(points,clouds?spacingKm:40,clouds?240:120),rows=[];let now=departure;
  const check=()=>{if(cancelled())throw Error('Hesap iptal edildi.');};
  for(let i=0;i<parts.length;i++){
   check();progress(i,parts.length);const part=parts[i],payload=await load(part.point);check();
@@ -92,7 +116,9 @@ export async function calculatePlan({points,kias,metres,departure,load,progress=
   if(!converged)throw Error('Rüzgâr ve geçiş saati hesabı yakınsamadı. Kalkış saatini değiştirin.');
   // Validate both segment boundaries: no extrapolation beyond forecast horizon.
   windAt(payload,now,metres);windAt(payload,now+seconds*1000,metres);
-  rows.push({...part,...s,seconds,start:now,arrival:now+seconds*1000});now+=seconds*1000;
+  const sampleTime=now+seconds*500;
+  const cloud=clouds?cloudAt(payload,sampleTime,metres):null;
+  rows.push({...part,...s,cloud,sampleTime,seconds,start:now,arrival:now+seconds*1000});now+=seconds*1000;
  }
  return {departure,arrival:now,minutes:(now-departure)/60000,nm:rows.reduce((s,r)=>s+r.nm,0),rows};
 }
